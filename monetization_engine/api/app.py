@@ -1,0 +1,394 @@
+"""Flask API for MoneyRadar."""
+
+from flask import Flask, request, jsonify
+from datetime import datetime
+import stripe
+
+from monetization_engine.config import get_settings
+from monetization_engine.database import get_db, init_db
+from monetization_engine.ingestion import StripeIngestion
+from monetization_engine.ingestion.usage import UsageTracker
+from monetization_engine.analysis import MismatchDetector
+from monetization_engine.analysis.risk_detection import RiskDetector, ExpansionScorer
+from monetization_engine.experiments import ExperimentTracker, ExperimentReporter
+
+settings = get_settings()
+app = Flask(__name__)
+app.config['SECRET_KEY'] = settings.secret_key
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint."""
+    return jsonify({"status": "healthy", "service": "MoneyRadar"}), 200
+
+
+# ============================================================================
+# Webhook Endpoints
+# ============================================================================
+
+@app.route('/webhooks/stripe', methods=['POST'])
+def stripe_webhook():
+    """Handle Stripe webhook events."""
+    payload = request.get_data()
+    sig_header = request.headers.get('Stripe-Signature')
+    
+    try:
+        if settings.stripe_webhook_secret:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, settings.stripe_webhook_secret
+            )
+        else:
+            event = request.get_json()
+        
+        # Process event
+        with get_db() as db:
+            ingestion = StripeIngestion(db)
+            ingestion.process_webhook_event(event)
+        
+        return jsonify({"status": "success"}), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# ============================================================================
+# Revenue Insights
+# ============================================================================
+
+@app.route('/api/revenue/mrr', methods=['GET'])
+def get_mrr():
+    """Get current MRR and recent trends."""
+    with get_db() as db:
+        from monetization_engine.models import MRRSnapshot, Subscription
+        from sqlalchemy import func
+        
+        # Current MRR
+        current_mrr = db.query(
+            func.sum(Subscription.mrr)
+        ).filter(Subscription.status == "active").scalar() or 0.0
+        
+        # Latest snapshot
+        latest_snapshot = db.query(MRRSnapshot).order_by(
+            MRRSnapshot.date.desc()
+        ).first()
+        
+        return jsonify({
+            "current_mrr": current_mrr,
+            "latest_snapshot": {
+                "date": latest_snapshot.date.isoformat() if latest_snapshot else None,
+                "total_mrr": latest_snapshot.total_mrr if latest_snapshot else 0,
+                "new_mrr": latest_snapshot.new_mrr if latest_snapshot else 0,
+                "expansion_mrr": latest_snapshot.expansion_mrr if latest_snapshot else 0,
+                "contraction_mrr": latest_snapshot.contraction_mrr if latest_snapshot else 0,
+                "churned_mrr": latest_snapshot.churned_mrr if latest_snapshot else 0
+            }
+        }), 200
+
+
+@app.route('/api/revenue/snapshots', methods=['GET'])
+def get_mrr_snapshots():
+    """Get historical MRR snapshots."""
+    days = request.args.get('days', 30, type=int)
+    
+    with get_db() as db:
+        from monetization_engine.models import MRRSnapshot
+        from datetime import timedelta
+        
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        snapshots = db.query(MRRSnapshot).filter(
+            MRRSnapshot.date >= cutoff
+        ).order_by(MRRSnapshot.date.desc()).all()
+        
+        return jsonify({
+            "snapshots": [
+                {
+                    "date": s.date.isoformat(),
+                    "total_mrr": s.total_mrr,
+                    "new_mrr": s.new_mrr,
+                    "expansion_mrr": s.expansion_mrr,
+                    "contraction_mrr": s.contraction_mrr,
+                    "churned_mrr": s.churned_mrr
+                }
+                for s in snapshots
+            ]
+        }), 200
+
+
+# ============================================================================
+# Mismatch Detection
+# ============================================================================
+
+@app.route('/api/analysis/mismatches', methods=['GET'])
+def analyze_mismatches():
+    """Analyze usage vs price mismatches."""
+    with get_db() as db:
+        detector = MismatchDetector(db)
+        results = detector.analyze_all_subscriptions()
+        
+        return jsonify(results), 200
+
+
+@app.route('/api/analysis/feature-pricing', methods=['GET'])
+def analyze_feature_pricing():
+    """Detect mispriced features."""
+    with get_db() as db:
+        detector = MismatchDetector(db)
+        results = detector.detect_feature_mispricing()
+        
+        return jsonify({"mispriced_features": results}), 200
+
+
+# ============================================================================
+# Risk Detection
+# ============================================================================
+
+@app.route('/api/alerts', methods=['GET'])
+def get_alerts():
+    """Get active alerts."""
+    severity = request.args.get('severity')
+    resolved = request.args.get('resolved', 'false').lower() == 'true'
+    
+    with get_db() as db:
+        from monetization_engine.models import Alert, AlertSeverity
+        
+        query = db.query(Alert).filter(Alert.is_resolved == resolved)
+        
+        if severity:
+            query = query.filter(Alert.severity == AlertSeverity[severity.upper()])
+        
+        alerts = query.order_by(Alert.created_at.desc()).limit(100).all()
+        
+        return jsonify({
+            "alerts": [
+                {
+                    "id": a.id,
+                    "type": a.alert_type.value,
+                    "severity": a.severity.value,
+                    "customer_id": a.customer_id,
+                    "title": a.title,
+                    "description": a.description,
+                    "recommended_action": a.recommended_action,
+                    "created_at": a.created_at.isoformat(),
+                    "data": a.data
+                }
+                for a in alerts
+            ]
+        }), 200
+
+
+@app.route('/api/alerts/scan', methods=['POST'])
+def scan_risks():
+    """Run risk detection scan."""
+    with get_db() as db:
+        detector = RiskDetector(db)
+        results = detector.scan_all_risks()
+        
+        return jsonify({
+            "critical_count": len(results["critical"]),
+            "warning_count": len(results["warning"]),
+            "informational_count": len(results["informational"]),
+            "total_alerts": sum(len(v) for v in results.values())
+        }), 200
+
+
+@app.route('/api/alerts/<int:alert_id>/resolve', methods=['POST'])
+def resolve_alert(alert_id):
+    """Mark an alert as resolved."""
+    with get_db() as db:
+        from monetization_engine.models import Alert
+        
+        alert = db.query(Alert).get(alert_id)
+        if not alert:
+            return jsonify({"error": "Alert not found"}), 404
+        
+        alert.is_resolved = True
+        alert.resolved_at = datetime.utcnow()
+        db.commit()
+        
+        return jsonify({"status": "resolved"}), 200
+
+
+# ============================================================================
+# Customer Scoring
+# ============================================================================
+
+@app.route('/api/customers/<customer_id>/score', methods=['GET', 'POST'])
+def customer_expansion_score(customer_id):
+    """Get or calculate customer expansion score."""
+    with get_db() as db:
+        scorer = ExpansionScorer(db)
+        
+        try:
+            score = scorer.score_customer(customer_id)
+            
+            return jsonify({
+                "customer_id": customer_id,
+                "expansion_score": score.expansion_score,
+                "category": score.expansion_category,
+                "tenure_days": score.tenure_days,
+                "usage_trend": score.usage_trend,
+                "calculated_at": score.calculated_at.isoformat()
+            }), 200
+        
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+
+
+# ============================================================================
+# Experiments
+# ============================================================================
+
+@app.route('/api/experiments', methods=['GET', 'POST'])
+def experiments():
+    """List or create experiments."""
+    if request.method == 'GET':
+        with get_db() as db:
+            tracker = ExperimentTracker(db)
+            active = tracker.get_active_experiments()
+            
+            return jsonify({
+                "experiments": [
+                    {
+                        "id": e.id,
+                        "name": e.name,
+                        "hypothesis": e.hypothesis,
+                        "status": e.status.value,
+                        "metric_tracked": e.metric_tracked,
+                        "started_at": e.started_at.isoformat() if e.started_at else None
+                    }
+                    for e in active
+                ]
+            }), 200
+    
+    else:  # POST
+        data = request.get_json()
+        
+        with get_db() as db:
+            tracker = ExperimentTracker(db)
+            experiment = tracker.create_experiment(
+                name=data['name'],
+                hypothesis=data['hypothesis'],
+                change_description=data['change_description'],
+                metric_tracked=data['metric_tracked'],
+                affected_segment=data.get('affected_segment', {}),
+                baseline_value=data.get('baseline_value')
+            )
+            
+            return jsonify({
+                "id": experiment.id,
+                "name": experiment.name,
+                "status": experiment.status.value
+            }), 201
+
+
+@app.route('/api/experiments/<int:experiment_id>', methods=['GET'])
+def get_experiment(experiment_id):
+    """Get experiment details and analysis."""
+    with get_db() as db:
+        tracker = ExperimentTracker(db)
+        analysis = tracker.analyze_experiment(experiment_id)
+        
+        return jsonify(analysis), 200
+
+
+@app.route('/api/experiments/<int:experiment_id>/start', methods=['POST'])
+def start_experiment(experiment_id):
+    """Start an experiment."""
+    with get_db() as db:
+        tracker = ExperimentTracker(db)
+        experiment = tracker.start_experiment(experiment_id)
+        
+        return jsonify({
+            "id": experiment.id,
+            "status": experiment.status.value,
+            "started_at": experiment.started_at.isoformat()
+        }), 200
+
+
+@app.route('/api/experiments/<int:experiment_id>/complete', methods=['POST'])
+def complete_experiment(experiment_id):
+    """Complete an experiment with results."""
+    data = request.get_json()
+    
+    with get_db() as db:
+        tracker = ExperimentTracker(db)
+        experiment = tracker.record_result(
+            experiment_id=experiment_id,
+            actual_value=data['actual_value'],
+            outcome=data['outcome']
+        )
+        
+        return jsonify({
+            "id": experiment.id,
+            "status": experiment.status.value,
+            "actual_value": experiment.actual_value,
+            "outcome": experiment.outcome
+        }), 200
+
+
+# ============================================================================
+# Usage Tracking
+# ============================================================================
+
+@app.route('/api/usage', methods=['POST'])
+def record_usage():
+    """Record usage data."""
+    data = request.get_json()
+    
+    with get_db() as db:
+        tracker = UsageTracker(db)
+        
+        usage = tracker.record_usage(
+            customer_id=data['customer_id'],
+            metric_name=data['metric_name'],
+            quantity=data['quantity'],
+            period_start=datetime.fromisoformat(data['period_start']) if 'period_start' in data else None,
+            period_end=datetime.fromisoformat(data['period_end']) if 'period_end' in data else None
+        )
+        
+        return jsonify({
+            "id": usage.id,
+            "customer_id": data['customer_id'],
+            "metric_name": usage.metric_name,
+            "quantity": usage.quantity
+        }), 201
+
+
+# ============================================================================
+# Administrative
+# ============================================================================
+
+@app.route('/api/admin/sync-stripe', methods=['POST'])
+def sync_stripe():
+    """Manually trigger Stripe sync."""
+    with get_db() as db:
+        ingestion = StripeIngestion(db)
+        ingestion.sync_products_and_plans()
+        
+        return jsonify({"status": "synced"}), 200
+
+
+@app.route('/api/admin/calculate-mrr-snapshot', methods=['POST'])
+def calculate_mrr_snapshot():
+    """Calculate daily MRR snapshot."""
+    with get_db() as db:
+        ingestion = StripeIngestion(db)
+        snapshot = ingestion.calculate_daily_mrr_snapshot()
+        
+        return jsonify({
+            "date": snapshot.date.isoformat(),
+            "total_mrr": snapshot.total_mrr
+        }), 200
+
+
+if __name__ == '__main__':
+    # Initialize database
+    init_db()
+    
+    # Run app
+    app.run(
+        host='0.0.0.0',
+        port=5000,
+        debug=settings.flask_env == 'development'
+    )
