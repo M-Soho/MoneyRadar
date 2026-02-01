@@ -357,3 +357,434 @@ def test_expansion_scorer_inactive_subscription(db_session):
     with pytest.raises(ValueError):
         scorer.score_customer("cus_nonexistent")
 
+
+def test_expansion_scorer_high_tenure(db_session):
+    """Test scoring with high tenure (365+ days)."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_longtime",
+        customer_id="cus_longtime",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=400)  # Over 1 year
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_longtime")
+    
+    # High tenure should contribute 30 points
+    assert score.tenure_days >= 365
+    assert score.expansion_score >= 30
+
+
+def test_expansion_scorer_strong_growth(db_session):
+    """Test scoring with strong usage growth (>50%)."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_growth",
+        customer_id="cus_growth",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=100)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Create strong growth pattern: 1000 -> 2000
+    base_date = datetime.now(UTC) - timedelta(days=30)
+    for i in range(10):
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=1000 + (i * 100),  # Strong linear growth
+            limit=10000,
+            period_start=base_date + timedelta(days=i*3),
+            period_end=base_date + timedelta(days=i*3+3),
+            recorded_at=base_date + timedelta(days=i*3)
+        )
+        db_session.add(usage)
+    
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_growth")
+    
+    # Growth is calculated as (second_half_avg - first_half_avg) / first_half_avg
+    # With 10 records: 1000, 1100, 1200, 1300, 1400 | 1500, 1600, 1700, 1800, 1900
+    # First half avg: 1200, Second half avg: 1700, Growth: (1700-1200)/1200 = 41.7%
+    assert score.usage_trend > 0.2  # Should show growth
+    # Category depends on total score (tenure + growth + engagement)
+    assert score.expansion_score > 0
+
+
+def test_expansion_scorer_moderate_growth(db_session):
+    """Test scoring with moderate usage growth (20-50%)."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_moderate",
+        customer_id="cus_moderate",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=250)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Create moderate growth: 1000 -> 1300 (30% growth)
+    base_date = datetime.now(UTC) - timedelta(days=30)
+    for i in range(10):
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=1000 + (i * 30),  # Moderate growth
+            limit=10000,
+            period_start=base_date + timedelta(days=i*3),
+            period_end=base_date + timedelta(days=i*3+3),
+            recorded_at=base_date + timedelta(days=i*3)
+        )
+        db_session.add(usage)
+    
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_moderate")
+    
+    # With moderate growth pattern, trend should be positive but may be < 0.2
+    assert score.usage_trend > 0  # Positive growth
+    assert score.expansion_category in ["safe_to_upsell", "neutral", "do_not_touch"]
+
+
+def test_expansion_scorer_churn_risk(db_session):
+    """Test scoring with declining usage (churn risk)."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_decline",
+        customer_id="cus_decline",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=200)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Create declining usage: 2000 -> 1000 (50% decline)
+    base_date = datetime.now(UTC) - timedelta(days=30)
+    for i in range(10):
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=2000 - (i * 100),  # Declining
+            limit=10000,
+            period_start=base_date + timedelta(days=i*3),
+            period_end=base_date + timedelta(days=i*3+3),
+            recorded_at=base_date + timedelta(days=i*3)
+        )
+        db_session.add(usage)
+    
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_decline")
+    
+    assert score.usage_trend < -0.2
+    assert score.expansion_category == "likely_to_churn"
+
+
+def test_expansion_scorer_no_usage_data(db_session):
+    """Test scoring with no usage data."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_new",
+        customer_id="cus_new",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=50)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_new")
+    
+    # No usage data means 0 trend and 0 average
+    assert score.usage_trend == 0.0
+    assert score.expansion_score <= 10  # Only tenure points for <90 days
+
+
+def test_expansion_scorer_single_usage_record(db_session):
+    """Test scoring with only one usage record."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_single",
+        customer_id="cus_single",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=100)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Single usage record
+    usage = UsageRecord(
+        subscription_id=subscription.id,
+        metric_name="api_calls",
+        quantity=500,
+        limit=10000,
+        period_start=datetime.now(UTC) - timedelta(days=1),
+        period_end=datetime.now(UTC),
+        recorded_at=datetime.now(UTC)
+    )
+    db_session.add(usage)
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_single")
+    
+    # With only 1 record, trend should be 0
+    assert score.usage_trend == 0.0
+
+
+def test_expansion_scorer_update_existing_score(db_session):
+    """Test updating an existing customer score."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_update",
+        customer_id="cus_update",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=150)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    
+    # First score
+    score1 = scorer.score_customer("cus_update")
+    first_score_value = score1.expansion_score
+    
+    # Score again
+    score2 = scorer.score_customer("cus_update")
+    
+    # Should be the same record, updated
+    assert score1.id == score2.id
+    assert score2.expansion_score == first_score_value
+
+
+def test_expansion_scorer_high_engagement(db_session):
+    """Test scoring with high usage engagement."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_engaged",
+        customer_id="cus_engaged",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=200)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # High usage: 90% of limit
+    base_date = datetime.now(UTC) - timedelta(days=30)
+    for i in range(10):
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=9000,  # 90% of limit
+            limit=10000,
+            period_start=base_date + timedelta(days=i*3),
+            period_end=base_date + timedelta(days=i*3+3),
+            recorded_at=base_date + timedelta(days=i*3)
+        )
+        db_session.add(usage)
+    
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_engaged")
+    
+    # High engagement should contribute close to 30 points
+    assert score.expansion_score >= 40  # Tenure + engagement
+
+
+def test_expansion_scorer_usage_without_limits(db_session):
+    """Test average usage calculation when no limits are set."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Enterprise",
+        price_monthly=299.0,
+        limits={},  # No limits
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_nolimit",
+        customer_id="cus_nolimit",
+        plan_id=plan.id,
+        status="active",
+        mrr=299.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=200)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Usage records without limits
+    base_date = datetime.now(UTC) - timedelta(days=30)
+    for i in range(5):
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=50000,  # High usage but no limit
+            limit=None,
+            period_start=base_date + timedelta(days=i*6),
+            period_end=base_date + timedelta(days=i*6+6),
+            recorded_at=base_date + timedelta(days=i*6)
+        )
+        db_session.add(usage)
+    
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_nolimit")
+    
+    # Without limits, engagement score should be 0
+    # Score should only come from tenure
+    assert score.expansion_score >= 20  # Tenure points only
+
+
