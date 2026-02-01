@@ -3,7 +3,7 @@
 import pytest
 import json
 from datetime import datetime, timedelta, UTC
-from flask import Flask
+from unittest.mock import patch
 
 from monetization_engine.api.app import app
 from monetization_engine.models import (
@@ -15,11 +15,16 @@ from monetization_engine.models import (
 
 @pytest.fixture
 def client(db_session):
-    """Create Flask test client."""
+    """Create Flask test client with patched database."""
     app.config['TESTING'] = True
     
-    with app.test_client() as client:
-        yield client
+    # Patch get_db to return our test session
+    def mock_get_db():
+        yield db_session
+    
+    with patch('monetization_engine.database.get_db', mock_get_db):
+        with app.test_client() as client:
+            yield client
 
 
 @pytest.fixture
@@ -304,11 +309,18 @@ def test_complete_experiment(client, sample_data):
 
 def test_sync_stripe(client, sample_data):
     """Test POST /api/admin/sync-stripe endpoint."""
-    response = client.post('/api/admin/sync-stripe')
-    assert response.status_code == 200
-    
-    data = json.loads(response.data)
-    assert 'message' in data
+    # Mock Stripe API to avoid actual API calls
+    with patch('monetization_engine.ingestion.stripe.Product.list') as mock_products, \
+         patch('monetization_engine.ingestion.stripe.Price.list') as mock_prices:
+        
+        mock_products.return_value = {'data': []}
+        mock_prices.return_value = {'data': []}
+        
+        response = client.post('/api/admin/sync-stripe')
+        assert response.status_code == 200
+        
+        data = json.loads(response.data)
+        assert 'message' in data
 
 
 def test_calculate_mrr_snapshot(client, sample_data):
