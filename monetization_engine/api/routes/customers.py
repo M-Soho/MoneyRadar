@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify
 
 from monetization_engine.database import get_db
-from monetization_engine.analysis.risk_detection import ExpansionScorer
+from monetization_engine.analysis import ExpansionScorer
 
 customers_bp = Blueprint('customers', __name__, url_prefix='/api/customers')
 

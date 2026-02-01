@@ -1,6 +1,6 @@
 """Revenue Risk Alert System - Early Warning Detection."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -50,7 +50,7 @@ class RiskDetector:
     def detect_declining_usage(self, lookback_days: int = 30) -> List[Alert]:
         """Detect customers with declining usage trends."""
         alerts = []
-        cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=lookback_days)
         
         # Get all active subscriptions
         subscriptions = self.db.query(Subscription).filter(
@@ -85,7 +85,7 @@ class RiskDetector:
         # Look for recent payment failures
         recent_failures = self.db.query(RevenueEvent).filter(
             RevenueEvent.event_type == RevenueEventType.PAYMENT_FAILED,
-            RevenueEvent.occurred_at >= datetime.utcnow() - timedelta(days=7)
+            RevenueEvent.occurred_at >= datetime.now(UTC) - timedelta(days=7)
         ).all()
         
         for event in recent_failures:
@@ -115,7 +115,7 @@ class RiskDetector:
     def detect_downgrades(self, lookback_days: int = 30) -> List[Alert]:
         """Detect recent plan downgrades."""
         alerts = []
-        cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=lookback_days)
         
         downgrades = self.db.query(RevenueEvent).filter(
             RevenueEvent.event_type == RevenueEventType.SUBSCRIPTION_DOWNGRADED,
@@ -150,7 +150,7 @@ class RiskDetector:
         
         # Get recent snapshots
         snapshots = self.db.query(MRRSnapshot).filter(
-            MRRSnapshot.date >= datetime.utcnow() - timedelta(days=lookback_days)
+            MRRSnapshot.date >= datetime.now(UTC) - timedelta(days=lookback_days)
         ).order_by(MRRSnapshot.date.desc()).limit(lookback_days).all()
         
         if len(snapshots) < 2:
@@ -198,7 +198,7 @@ class RiskDetector:
     
     def _calculate_usage_trend(self, subscription_id: int, days: int) -> float:
         """Calculate usage trend over time period."""
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
         
         # Get usage records
         usage_records = self.db.query(UsageRecord).filter(

@@ -1,9 +1,16 @@
 """Customer Expansion Scoring System."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from sqlalchemy.orm import Session
 
 from monetization_engine.models import Subscription, CustomerScore, UsageRecord
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    """Ensure datetime is UTC-aware."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
 class ExpansionScorer:
@@ -24,7 +31,8 @@ class ExpansionScorer:
             raise ValueError(f"No active subscription for customer {customer_id}")
         
         # Calculate factors
-        tenure_days = (datetime.utcnow() - subscription.created_at).days
+        created_at = _ensure_utc(subscription.created_at)
+        tenure_days = (datetime.now(UTC) - created_at).days
         usage_trend = self._get_usage_trend(subscription.id)
         
         # Simple scoring algorithm
@@ -73,7 +81,7 @@ class ExpansionScorer:
             customer_score.expansion_category = category
             customer_score.tenure_days = tenure_days
             customer_score.usage_trend = usage_trend
-            customer_score.calculated_at = datetime.utcnow()
+            customer_score.calculated_at = datetime.now(UTC)
         else:
             customer_score = CustomerScore(
                 customer_id=customer_id,
@@ -90,7 +98,7 @@ class ExpansionScorer:
     
     def _get_usage_trend(self, subscription_id: int, days: int = 30) -> float:
         """Get usage trend for subscription."""
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         
         records = self.db.query(UsageRecord).filter(
             UsageRecord.subscription_id == subscription_id,

@@ -1,7 +1,7 @@
 """Tests for mismatch detection."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from monetization_engine.models import Product, Plan, Subscription, UsageRecord
 from monetization_engine.analysis import MismatchDetector
 
@@ -18,7 +18,7 @@ def test_high_usage_detection(db_session):
         name="Starter",
         price_monthly=29.0,
         limits={"api_calls": 1000},
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -29,8 +29,8 @@ def test_high_usage_detection(db_session):
         plan_id=plan.id,
         status="active",
         mrr=29.0,
-        current_period_start=datetime.utcnow() - timedelta(days=15),
-        current_period_end=datetime.utcnow() + timedelta(days=15)
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15)
     )
     db_session.add(subscription)
     db_session.flush()
@@ -68,7 +68,7 @@ def test_low_usage_detection(db_session):
         name="Enterprise",
         price_monthly=299.0,
         limits={"api_calls": 100000},
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -79,8 +79,8 @@ def test_low_usage_detection(db_session):
         plan_id=plan.id,
         status="active",
         mrr=299.0,
-        current_period_start=datetime.utcnow() - timedelta(days=15),
-        current_period_end=datetime.utcnow() + timedelta(days=15)
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15)
     )
     db_session.add(subscription)
     db_session.flush()

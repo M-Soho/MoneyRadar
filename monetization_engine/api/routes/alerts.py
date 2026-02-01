@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from monetization_engine.database import get_db
-from monetization_engine.analysis.risk_detection import RiskDetector
+from monetization_engine.analysis import RiskDetector
 from monetization_engine.models import Alert
 
 alerts_bp = Blueprint('alerts', __name__, url_prefix='/api/alerts')
@@ -67,7 +67,6 @@ def resolve_alert(alert_id):
         
         from datetime import datetime
         alert.is_resolved = True
-        alert.resolved_at = datetime.utcnow()
-        db.commit()
+        alert.resolved_at = datetime.now(UTC)
         
         return jsonify({"message": "Alert resolved"}), 200

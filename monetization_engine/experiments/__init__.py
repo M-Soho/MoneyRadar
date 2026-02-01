@@ -1,6 +1,6 @@
 """Monetization Experiments Tracker - Prevent Pricing Amnesia."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -66,7 +66,7 @@ class ExperimentTracker:
         experiment.control_group_size = control_size
         experiment.variant_group_size = variant_size
         experiment.status = ExperimentStatus.RUNNING
-        experiment.started_at = datetime.utcnow()
+        experiment.started_at = datetime.now(UTC)
         
         self.db.commit()
         
@@ -87,7 +87,7 @@ class ExperimentTracker:
         experiment.actual_value = actual_value
         experiment.outcome = outcome
         experiment.status = ExperimentStatus.COMPLETED
-        experiment.ended_at = datetime.utcnow()
+        experiment.ended_at = datetime.now(UTC)
         
         self.db.commit()
         
@@ -158,7 +158,7 @@ class ExperimentTracker:
             "improvement": improvement,
             "improvement_percent": improvement_percent,
             "target_met": target_met,
-            "days_running": (datetime.utcnow() - experiment.started_at).days if experiment.started_at else 0
+            "days_running": (datetime.now(UTC) - experiment.started_at).days if experiment.started_at else 0
         }
     
     def _calculate_metric(
@@ -195,7 +195,7 @@ class ExperimentTracker:
             total_subs = len(subscriptions)
             churned = self.db.query(Subscription).filter(
                 Subscription.status == "canceled",
-                Subscription.canceled_at >= datetime.utcnow() - timedelta(days=30)
+                Subscription.canceled_at >= datetime.now(UTC) - timedelta(days=30)
             ).count()
             
             if total_subs == 0:

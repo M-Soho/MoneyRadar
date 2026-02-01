@@ -1,7 +1,7 @@
 """Tests for experiment tracking and reporting."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from monetization_engine.models import (
     Product, Plan, Subscription, Experiment, ExperimentStatus
 )
@@ -36,7 +36,7 @@ def test_start_experiment(db_session):
         product_id=product.id,
         name="Pro",
         price_monthly=49.0,
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -47,8 +47,8 @@ def test_start_experiment(db_session):
         plan_id=plan.id,
         status="active",
         mrr=49.0,
-        current_period_start=datetime.utcnow(),
-        current_period_end=datetime.utcnow() + timedelta(days=30)
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
     )
     db_session.add(subscription)
     db_session.commit()
@@ -81,7 +81,7 @@ def test_experiment_reporter(db_session):
         product_id=product.id,
         name="Pro",
         price_monthly=49.0,
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -96,8 +96,8 @@ def test_experiment_reporter(db_session):
         baseline_value=100.0,
         actual_value=110.0,
         outcome="Positive result",
-        started_at=datetime.utcnow() - timedelta(days=30),
-        ended_at=datetime.utcnow()
+        started_at=datetime.now(UTC) - timedelta(days=30),
+        ended_at=datetime.now(UTC)
     )
     db_session.add(experiment)
     db_session.commit()
@@ -123,7 +123,7 @@ def test_get_learnings(db_session):
         product_id=product.id,
         name="Pro",
         price_monthly=49.0,
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -139,8 +139,8 @@ def test_get_learnings(db_session):
             baseline_value=100.0,
             actual_value=100.0 + (i * 5),
             outcome=f"Result {i}",
-            started_at=datetime.utcnow() - timedelta(days=30 + i),
-            ended_at=datetime.utcnow() - timedelta(days=i)
+            started_at=datetime.now(UTC) - timedelta(days=30 + i),
+            ended_at=datetime.now(UTC) - timedelta(days=i)
         )
         db_session.add(experiment)
     

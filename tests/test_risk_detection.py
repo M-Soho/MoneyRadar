@@ -1,7 +1,7 @@
 """Tests for risk detection."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from monetization_engine.models import (
     Product, Plan, Subscription, UsageRecord, 
     RevenueEvent, RevenueEventType, MRRSnapshot, Alert
@@ -21,7 +21,7 @@ def test_detect_declining_usage(db_session):
         name="Starter",
         price_monthly=29.0,
         limits={"api_calls": 1000},
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -32,15 +32,15 @@ def test_detect_declining_usage(db_session):
         plan_id=plan.id,
         status="active",
         mrr=29.0,
-        current_period_start=datetime.utcnow() - timedelta(days=30),
-        current_period_end=datetime.utcnow() + timedelta(days=30),
-        created_at=datetime.utcnow() - timedelta(days=60)
+        current_period_start=datetime.now(UTC) - timedelta(days=30),
+        current_period_end=datetime.now(UTC) + timedelta(days=30),
+        created_at=datetime.now(UTC) - timedelta(days=60)
     )
     db_session.add(subscription)
     db_session.flush()
     
     # Create declining usage pattern
-    base_date = datetime.utcnow() - timedelta(days=30)
+    base_date = datetime.now(UTC) - timedelta(days=30)
     for i in range(10):
         usage = UsageRecord(
             subscription_id=subscription.id,
@@ -74,7 +74,7 @@ def test_detect_payment_issues(db_session):
         product_id=product.id,
         name="Pro",
         price_monthly=99.0,
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -85,8 +85,8 @@ def test_detect_payment_issues(db_session):
         plan_id=plan.id,
         status="active",
         mrr=99.0,
-        current_period_start=datetime.utcnow(),
-        current_period_end=datetime.utcnow() + timedelta(days=30)
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
     )
     db_session.add(subscription)
     db_session.flush()
@@ -97,7 +97,7 @@ def test_detect_payment_issues(db_session):
         event_type=RevenueEventType.PAYMENT_FAILED,
         stripe_event_id="evt_test",
         amount=99.0,
-        occurred_at=datetime.utcnow(),
+        occurred_at=datetime.now(UTC),
         event_metadata={"attempt_count": 3}
     )
     db_session.add(event)
@@ -123,7 +123,7 @@ def test_expansion_scorer(db_session):
         name="Starter",
         price_monthly=29.0,
         limits={"api_calls": 1000},
-        effective_from=datetime.utcnow()
+        effective_from=datetime.now(UTC)
     )
     db_session.add(plan)
     db_session.flush()
@@ -134,15 +134,15 @@ def test_expansion_scorer(db_session):
         plan_id=plan.id,
         status="active",
         mrr=29.0,
-        current_period_start=datetime.utcnow() - timedelta(days=15),
-        current_period_end=datetime.utcnow() + timedelta(days=15),
-        created_at=datetime.utcnow() - timedelta(days=200)  # Good tenure
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=200)  # Good tenure
     )
     db_session.add(subscription)
     db_session.flush()
     
     # Create growing usage pattern
-    base_date = datetime.utcnow() - timedelta(days=30)
+    base_date = datetime.now(UTC) - timedelta(days=30)
     for i in range(10):
         usage = UsageRecord(
             subscription_id=subscription.id,

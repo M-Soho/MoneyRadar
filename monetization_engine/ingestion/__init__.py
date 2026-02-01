@@ -2,7 +2,7 @@
 
 import stripe
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 
@@ -212,7 +212,7 @@ class StripeIngestion:
         
         # Update subscription
         subscription.status = "canceled"
-        subscription.canceled_at = datetime.utcnow()
+        subscription.canceled_at = datetime.now(UTC)
         
         # Create revenue event
         event = RevenueEvent(
@@ -296,7 +296,7 @@ class StripeIngestion:
     def calculate_daily_mrr_snapshot(self, date: Optional[datetime] = None) -> MRRSnapshot:
         """Calculate and store daily MRR snapshot."""
         if date is None:
-            date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            date = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         
         # Check if snapshot already exists
         existing = self.db.query(MRRSnapshot).filter(

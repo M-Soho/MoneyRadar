@@ -1,7 +1,7 @@
 """Revenue-related API routes."""
 
 from flask import Blueprint, jsonify, request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from monetization_engine.database import get_db
 from monetization_engine.ingestion import StripeIngestion
@@ -44,7 +44,7 @@ def get_mrr_snapshots():
     days = request.args.get('days', 30, type=int)
     
     with get_db() as db:
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         snapshots = db.query(MRRSnapshot).filter(
             MRRSnapshot.date >= cutoff
         ).order_by(MRRSnapshot.date).all()
