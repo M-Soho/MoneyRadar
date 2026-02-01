@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, UTC
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from monetization_engine.config import get_settings
 from monetization_engine.models import (

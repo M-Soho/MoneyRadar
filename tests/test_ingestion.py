@@ -1067,3 +1067,522 @@ def test_webhook_unhandled_event(db_session):
     ingestion = StripeIngestion(db_session)
     # Should not raise an error, just log and ignore
     ingestion.process_webhook_event(event_data)
+
+
+@patch('stripe.Product.list')
+@patch('stripe.Price.list')
+def test_sync_products_and_plans_new_product(mock_price_list, mock_product_list, db_session):
+    """Test syncing new products and plans from Stripe."""
+    # Mock Stripe responses
+    mock_product = Mock()
+    mock_product.id = "prod_test123"
+    mock_product.name = "Premium Plan"
+    mock_product.description = "Our premium offering"
+    
+    mock_product_list.return_value = Mock(data=[mock_product])
+    
+    mock_price = Mock()
+    mock_price.id = "price_test123"
+    mock_price.nickname = "Monthly Premium"
+    mock_price.unit_amount = 9900  # $99.00
+    mock_price.currency = "usd"
+    mock_price.recurring = Mock(interval="month")
+    mock_price.metadata = {"api_calls": "10000", "storage_gb": "100"}
+    mock_price.created = int(datetime.now(UTC).timestamp())
+    
+    mock_price_list.return_value = Mock(data=[mock_price])
+    
+    # Sync products
+    ingestion = StripeIngestion(db_session)
+    ingestion.sync_products_and_plans()
+    
+    # Verify product was created
+    products = db_session.query(Product).all()
+    assert len(products) == 1
+    assert products[0].stripe_product_id == "prod_test123"
+    assert products[0].name == "Premium Plan"
+    
+    # Verify plan was created
+    plans = db_session.query(Plan).all()
+    assert len(plans) == 1
+    assert plans[0].name == "Monthly Premium"
+    assert plans[0].price_monthly == 99.0
+
+
+@patch('stripe.Product.list')
+@patch('stripe.Price.list')
+def test_sync_products_existing_product(mock_price_list, mock_product_list, db_session):
+    """Test syncing when product already exists."""
+    # Create existing product
+    product = Product(
+        name="Old Name",
+        stripe_product_id="prod_existing"
+    )
+    db_session.add(product)
+    db_session.commit()
+    
+    # Mock Stripe responses
+    mock_product = Mock()
+    mock_product.id = "prod_existing"
+    mock_product.name = "Updated Name"
+    mock_product.description = "Updated description"
+    
+    mock_product_list.return_value = Mock(data=[mock_product])
+    
+    mock_price = Mock()
+    mock_price.id = "price_new"
+    mock_price.nickname = None  # Test fallback naming
+    mock_price.unit_amount = 4900
+    mock_price.currency = "usd"
+    mock_price.recurring = Mock(interval="month")
+    mock_price.metadata = {}
+    mock_price.created = int(datetime.now(UTC).timestamp())
+    
+    mock_price_list.return_value = Mock(data=[mock_price])
+    
+    # Sync products
+    ingestion = StripeIngestion(db_session)
+    ingestion.sync_products_and_plans()
+    
+    # Should not create duplicate product
+    products = db_session.query(Product).all()
+    assert len(products) == 1
+    
+    # Plan should be created
+    plans = db_session.query(Plan).all()
+    assert len(plans) == 1
+    assert plans[0].name.startswith("Plan price_ne")  # Fallback name
+
+
+@patch('stripe.Product.list')
+@patch('stripe.Price.list')
+def test_sync_annual_plan(mock_price_list, mock_product_list, db_session):
+    """Test syncing annual subscription plan."""
+    # Mock Stripe responses
+    mock_product = Mock()
+    mock_product.id = "prod_annual"
+    mock_product.name = "Annual Plan"
+    mock_product.description = "Yearly subscription"
+    
+    mock_product_list.return_value = Mock(data=[mock_product])
+    
+    mock_price = Mock()
+    mock_price.id = "price_annual"
+    mock_price.nickname = "Annual"
+    mock_price.unit_amount = 99000  # $990.00/year
+    mock_price.currency = "usd"
+    mock_price.recurring = Mock(interval="year")
+    mock_price.metadata = {}
+    mock_price.created = int(datetime.now(UTC).timestamp())
+    
+    mock_price_list.return_value = Mock(data=[mock_price])
+    
+    # Sync products
+    ingestion = StripeIngestion(db_session)
+    ingestion.sync_products_and_plans()
+    
+    # Verify plan pricing
+    plans = db_session.query(Plan).all()
+    assert len(plans) == 1
+    assert plans[0].price_annual == 990.0
+    assert plans[0].price_monthly == 82.5  # 990/12
+
+
+@patch('stripe.Product.list')
+@patch('stripe.Price.list')
+def test_sync_existing_plan(mock_price_list, mock_product_list, db_session):
+    """Test that existing plans are not duplicated."""
+    # Create existing product and plan
+    product = Product(
+        name="Existing Product",
+        stripe_product_id="prod_existing"
+    )
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Existing Plan",
+        price_monthly=49.0,
+        stripe_price_id="price_existing",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.commit()
+    
+    # Mock Stripe responses
+    mock_product = Mock()
+    mock_product.id = "prod_existing"
+    mock_product.name = "Existing Product"
+    mock_product.description = "Test"
+    
+    mock_product_list.return_value = Mock(data=[mock_product])
+    
+    mock_price = Mock()
+    mock_price.id = "price_existing"
+    mock_price.nickname = "Existing Plan"
+    mock_price.unit_amount = 4900
+    mock_price.currency = "usd"
+    mock_price.recurring = Mock(interval="month")
+    mock_price.metadata = {}
+    mock_price.created = int(datetime.now(UTC).timestamp())
+    
+    mock_price_list.return_value = Mock(data=[mock_price])
+    
+    # Sync products
+    ingestion = StripeIngestion(db_session)
+    ingestion.sync_products_and_plans()
+    
+    # Should not create duplicate plan
+    plans = db_session.query(Plan).all()
+    assert len(plans) == 1
+
+
+def test_handle_subscription_updated_creates_if_missing(db_session):
+    """Test that updated event creates subscription if it doesn't exist."""
+    # Create product and plan
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Starter",
+        price_monthly=29.0,
+        stripe_price_id="price_test",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.commit()
+    
+    ingestion = StripeIngestion(db_session)
+    
+    # Process updated event for non-existent subscription
+    event_data = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_new",
+                "customer": "cus_test",
+                "status": "active",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [
+                        {
+                            "price": {
+                                "id": "price_test",
+                                "unit_amount": 2900,
+                                "recurring": {"interval": "month"}
+                            },
+                            "quantity": 1
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    
+    ingestion.process_webhook_event(event_data)
+    
+    # Should create subscription
+    subscriptions = db_session.query(Subscription).all()
+    assert len(subscriptions) == 1
+    assert subscriptions[0].stripe_subscription_id == "sub_new"
+
+
+def test_subscription_updated_no_mrr_change(db_session):
+    """Test subscription updated event with no MRR change."""
+    # Create subscription
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_test",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_test",
+        customer_id="cus_test",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    ingestion = StripeIngestion(db_session)
+    
+    # Update with same MRR
+    event_data = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_test",
+                "customer": "cus_test",
+                "status": "active",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [
+                        {
+                            "price": {
+                                "id": "price_test",
+                                "unit_amount": 9900,
+                                "recurring": {"interval": "month"}
+                            },
+                            "quantity": 1
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    
+    ingestion.process_webhook_event(event_data)
+    
+    # Should not create revenue event for zero delta
+    events = db_session.query(RevenueEvent).all()
+    assert len(events) == 0
+
+
+def test_payment_succeeded_no_subscription(db_session):
+    """Test payment succeeded without subscription ID."""
+    ingestion = StripeIngestion(db_session)
+    
+    # Invoice without subscription
+    event_data = {
+        "type": "invoice.payment_succeeded",
+        "data": {
+            "object": {
+                "id": "in_test",
+                "subscription": None,  # No subscription
+                "amount_paid": 9900,
+                "currency": "usd"
+            }
+        }
+    }
+    
+    # Should handle gracefully
+    ingestion.process_webhook_event(event_data)
+    
+    # No event should be created
+    events = db_session.query(RevenueEvent).all()
+    assert len(events) == 0
+
+
+def test_payment_failed_no_subscription(db_session):
+    """Test payment failed without subscription ID."""
+    ingestion = StripeIngestion(db_session)
+    
+    # Invoice without subscription
+    event_data = {
+        "type": "invoice.payment_failed",
+        "data": {
+            "object": {
+                "id": "in_test",
+                "subscription": None,  # No subscription
+                "amount_due": 9900,
+                "currency": "usd",
+                "attempt_count": 2
+            }
+        }
+    }
+    
+    # Should handle gracefully
+    ingestion.process_webhook_event(event_data)
+    
+    # No event should be created
+    events = db_session.query(RevenueEvent).all()
+    assert len(events) == 0
+
+
+def test_calculate_mrr_snapshot_existing(db_session):
+    """Test that existing snapshots are not duplicated."""
+    # Create existing snapshot
+    snapshot_date = datetime(2026, 1, 15, 0, 0, 0, tzinfo=UTC)
+    existing = MRRSnapshot(
+        date=snapshot_date,
+        total_mrr=1000.0,
+        new_mrr=100.0,
+        expansion_mrr=50.0,
+        contraction_mrr=25.0,
+        churned_mrr=10.0
+    )
+    db_session.add(existing)
+    db_session.commit()
+    
+    ingestion = StripeIngestion(db_session)
+    
+    # Try to create snapshot for same date
+    snapshot = ingestion.calculate_daily_mrr_snapshot(snapshot_date)
+    
+    # Should return existing snapshot
+    assert snapshot.id == existing.id
+    assert snapshot.total_mrr == 1000.0
+    
+    # Should not create duplicate
+    snapshots = db_session.query(MRRSnapshot).all()
+    assert len(snapshots) == 1
+
+
+def test_calculate_mrr_snapshot_with_events(db_session):
+    """Test MRR snapshot calculation with various events."""
+    # Create subscriptions
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    # Active subscription
+    sub1 = Subscription(
+        stripe_subscription_id="sub_1",
+        customer_id="cus_1",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0
+    )
+    db_session.add(sub1)
+    
+    # Another active subscription
+    sub2 = Subscription(
+        stripe_subscription_id="sub_2",
+        customer_id="cus_2",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0
+    )
+    db_session.add(sub2)
+    db_session.flush()
+    
+    # Create events for today
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # New subscription
+    event1 = RevenueEvent(
+        subscription_id=sub1.id,
+        event_type=RevenueEventType.SUBSCRIPTION_CREATED,
+        stripe_event_id="evt_1",
+        mrr_delta=99.0,
+        occurred_at=today + timedelta(hours=10)
+    )
+    db_session.add(event1)
+    
+    # Upgrade
+    event2 = RevenueEvent(
+        subscription_id=sub2.id,
+        event_type=RevenueEventType.SUBSCRIPTION_UPGRADED,
+        stripe_event_id="evt_2",
+        mrr_delta=50.0,
+        occurred_at=today + timedelta(hours=11)
+    )
+    db_session.add(event2)
+    
+    # Downgrade
+    event3 = RevenueEvent(
+        subscription_id=sub2.id,
+        event_type=RevenueEventType.SUBSCRIPTION_DOWNGRADED,
+        stripe_event_id="evt_3",
+        mrr_delta=-20.0,
+        occurred_at=today + timedelta(hours=12)
+    )
+    db_session.add(event3)
+    
+    # Cancellation
+    event4 = RevenueEvent(
+        subscription_id=sub1.id,
+        event_type=RevenueEventType.SUBSCRIPTION_CANCELED,
+        stripe_event_id="evt_4",
+        mrr_delta=-99.0,
+        occurred_at=today + timedelta(hours=13)
+    )
+    db_session.add(event4)
+    db_session.commit()
+    
+    ingestion = StripeIngestion(db_session)
+    snapshot = ingestion.calculate_daily_mrr_snapshot(today)
+    
+    # Verify snapshot
+    assert snapshot.total_mrr == 198.0  # Both subs active
+    assert snapshot.new_mrr == 99.0
+    assert snapshot.expansion_mrr == 50.0
+    assert snapshot.contraction_mrr == 20.0
+    assert snapshot.churned_mrr == 99.0
+
+
+def test_subscription_created_no_plan(db_session):
+    """Test subscription created event with unknown plan."""
+    ingestion = StripeIngestion(db_session)
+    
+    # Event with unknown price ID
+    event_data = {
+        "type": "customer.subscription.created",
+        "data": {
+            "object": {
+                "id": "sub_test",
+                "customer": "cus_test",
+                "status": "active",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [
+                        {
+                            "price": {
+                                "id": "price_unknown",
+                                "unit_amount": 2900,
+                                "recurring": {"interval": "month"}
+                            },
+                            "quantity": 1
+                        }
+                    ]
+                }
+            }
+        }
+    }
+    
+    # Should handle gracefully (log warning but not crash)
+    ingestion.process_webhook_event(event_data)
+    
+    # No subscription should be created
+    subscriptions = db_session.query(Subscription).all()
+    assert len(subscriptions) == 0
+
+
+def test_subscription_deleted_nonexistent(db_session):
+    """Test deletion event for non-existent subscription."""
+    ingestion = StripeIngestion(db_session)
+    
+    # Delete event for non-existent subscription
+    event_data = {
+        "type": "customer.subscription.deleted",
+        "data": {
+            "object": {
+                "id": "sub_nonexistent",
+                "customer": "cus_test",
+                "status": "canceled"
+            }
+        }
+    }
+    
+    # Should handle gracefully
+    ingestion.process_webhook_event(event_data)
+    
+    # No error should be raised
+    assert True

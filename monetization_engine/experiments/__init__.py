@@ -158,7 +158,7 @@ class ExperimentTracker:
             "improvement": improvement,
             "improvement_percent": improvement_percent,
             "target_met": target_met,
-            "days_running": (datetime.now(UTC) - experiment.started_at).days if experiment.started_at else 0
+            "days_running": (datetime.now() - experiment.started_at).days if experiment.started_at else 0
         }
     
     def _calculate_metric(
