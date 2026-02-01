@@ -6,7 +6,7 @@ from monetization_engine.models import (
     Product, Plan, Subscription, UsageRecord, 
     RevenueEvent, RevenueEventType, MRRSnapshot, Alert
 )
-from monetization_engine.analysis.risk_detection import RiskDetector, ExpansionScorer
+from monetization_engine.analysis import RiskDetector, ExpansionScorer
 
 
 def test_detect_declining_usage(db_session):
