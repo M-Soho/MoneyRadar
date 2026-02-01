@@ -162,10 +162,11 @@ We intentionally **do not** handle:
 ### Prerequisites
 
 - **Python 3.9+** (3.12 recommended)
+- **Node.js 18+** and npm (for web UI)
 - **Stripe Account** with API access
 - **PostgreSQL** (recommended) or SQLite (development)
 
-### Standard Installation
+### Backend Installation
 
 ```bash
 # Clone the repository
@@ -182,6 +183,21 @@ pip install -r requirements.txt
 # Or install as a package
 pip install -e .
 ```
+
+### Frontend Installation
+
+```bash
+# Navigate to frontend directory
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+The web UI will be available at http://localhost:3000
 
 ### Development Installation
 
@@ -296,7 +312,31 @@ moneyradar -v scan-risks
 
 ---
 
-### API Server
+### API Server & Web UI
+
+Start the Flask API server:
+
+```bash
+# Start the API server
+python -m monetization_engine.api.app
+
+# Or use the CLI
+moneyradar serve
+```
+
+In a separate terminal, start the web UI:
+
+```bash
+cd frontend
+npm run dev
+```
+
+**Access the application:**
+- Web UI: http://localhost:3000
+- API: http://localhost:5000
+- Health check: http://localhost:5000/health
+
+**Available API endpoints:**
 
 MoneyRadar includes a RESTful API built with Flask for programmatic access and webhook handling.
 
@@ -364,7 +404,8 @@ MoneyRadar is configured via environment variables (stored in `.env` file):
 
 - **[USAGE.md](USAGE.md)** - Detailed usage guide with examples
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Complete deployment instructions
-- **[API Documentation](docs/API.md)** - Full API reference
+- **[Frontend README](frontend/README.md)** - Web UI documentation
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Code architecture and design
 - **[Examples](examples/)** - Working code examples
 
 ---
@@ -379,9 +420,9 @@ MoneyRadar is configured via environment variables (stored in `.env` file):
 
 3. **Evidence-Based Pricing** - The experiment tracker builds institutional knowledge over time, preventing "pricing amnesia."
 
-4. **Solo-Optimized** - Designed for minimal maintenance and maximum insight. No complex dashboards or configuration.
+4. **Solo-Optimized** - Designed for minimal maintenance and maximum insight. Modern web UI combined with powerful CLI.
 
-5. **Actionable Over Pretty** - CLI-first design with specific, actionable recommendations over beautiful but vague dashboards.
+5. **Actionable Over Pretty** - Specific, actionable recommendations over vague dashboards. The UI provides clear insights and next steps.
 
 ### What Makes MoneyRadar Different?
 

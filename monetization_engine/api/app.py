@@ -5,6 +5,7 @@ all route blueprints for the MoneyRadar API.
 """
 
 from flask import Flask, jsonify
+from flask_cors import CORS
 
 from monetization_engine.config import get_settings
 from monetization_engine.database import init_db
@@ -21,6 +22,15 @@ from monetization_engine.api.routes import (
 settings = get_settings()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = settings.secret_key
+
+# Enable CORS for frontend development
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Register blueprints
 app.register_blueprint(revenue_bp)

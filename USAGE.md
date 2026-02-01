@@ -1,8 +1,100 @@
 # Usage Guide - MoneyRadar
 
+## Getting Started
+
+MoneyRadar provides two interfaces:
+1. **Web UI** - Modern React dashboard for visual analysis (recommended)
+2. **CLI** - Command-line interface for automation and scripting
+
+### Starting the Application
+
+**Option 1: Web UI (Recommended)**
+
+```bash
+# Terminal 1: Start the API server
+python -m monetization_engine.api.app
+
+# Terminal 2: Start the web UI
+cd frontend
+npm run dev
+```
+
+Access the web UI at http://localhost:3000
+
+**Option 2: CLI Only**
+
+```bash
+# Use CLI commands directly
+moneyradar list-alerts
+moneyradar calculate-mrr
+```
+
+---
+
+## Web UI Guide
+
+### Dashboard Overview
+
+The main dashboard provides at-a-glance metrics:
+- **Current MRR** with trend indicator
+- **Active Alerts** count
+- **Revenue Movement** (new, expansion, contraction, churn)
+- **MRR Trend Chart** - visualize growth over time
+- **Recent Alerts** - quick access to top priorities
+
+### Revenue Analytics
+
+Track detailed MRR metrics:
+- Historical MRR trends (30/90/180/365 days)
+- Revenue movement breakdown
+- Component analysis (new, expansion, contraction, churn)
+- Time-based filtering
+
+### Alerts Management
+
+Monitor and resolve revenue signals:
+- Filter by status (active/resolved/all)
+- View severity levels (critical/high/medium/low)
+- One-click alert resolution
+- Scan for new alerts
+- Detailed alert metadata
+
+### Usage Mismatches
+
+Identify pricing optimization opportunities:
+- Upgrade candidates (overusing current plan)
+- Downgrade opportunities (underutilizing plan)
+- Severity-based filtering
+- Actionable recommendations
+
+### Customer Scoring
+
+Analyze expansion readiness:
+- Enter customer ID to get score
+- View score factors and breakdown
+- Get actionable recommendations
+- Understand score interpretation
+
+### Pricing Experiments
+
+Track pricing changes:
+- Create new experiments
+- Start/complete workflows
+- Track MRR impact
+- View experiment history
+
+---
+
 ## Daily Workflow
 
-### Morning Routine (5 minutes)
+### Morning Routine (5 minutes) - Web UI
+
+1. **Open Dashboard** at http://localhost:3000
+2. **Check Active Alerts** - Review critical revenue risks
+3. **Review MRR Trend** - See latest movements
+4. **Click through top 3 alerts** - Address highest priority items
+
+### Morning Routine (5 minutes) - CLI
 
 1. **Check Critical Alerts**
    ```bash
@@ -22,7 +114,24 @@
    ```
    Surface any new warning signs.
 
-### Weekly Review (15 minutes)
+### Weekly Review (15 minutes) - Web UI
+
+1. **Navigate to Mismatches page**
+   - Review top upgrade candidates
+   - Identify potential downgrades
+   - Plan customer outreach
+
+2. **Check Customer Scores**
+   - Score high-value customers
+   - Identify safe upsell opportunities
+   - Focus retention efforts
+
+3. **Review Experiments**
+   - Check running experiments
+   - Complete finished tests
+   - Document outcomes
+
+### Weekly Review (15 minutes) - CLI
 
 1. **Analyze Mismatches**
    ```bash

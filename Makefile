@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test lint format clean run-api run-cli docker-build docker-run
+.PHONY: help install install-dev install-ui install-all test lint format clean run-api dev dev-api dev-ui build-ui init-db
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -11,6 +11,11 @@ install: ## Install production dependencies
 
 install-dev: ## Install development dependencies
 	pip install -e ".[dev]"
+
+install-ui: ## Install frontend dependencies
+	cd frontend && npm install
+
+install-all: install install-ui ## Install all dependencies (backend + frontend)
 
 test: ## Run tests with coverage
 	pytest tests/ -v --cov=monetization_engine --cov-report=term-missing
@@ -33,10 +38,11 @@ clean: ## Remove build artifacts and cache
 	find . -type f -name '*.pyc' -delete
 	find . -type f -name '*.pyo' -delete
 	rm -rf .pytest_cache .coverage htmlcov/
+	rm -rf frontend/node_modules frontend/dist
 	rm -f moneyradar.db
 
 init-db: ## Initialize database
-	moneyradar init
+	python init_db.py
 
 sync: ## Sync data from Stripe
 	moneyradar sync-stripe
@@ -47,7 +53,22 @@ analyze: ## Run analysis
 	moneyradar scan-risks
 
 run-api: ## Start Flask API server
-	FLASK_APP=monetization_engine.api.app flask run
+	python -m monetization_engine.api.app
+
+dev: ## Start development environment (API + UI)
+	./start-dev.sh
+
+dev-api: ## Start only API server
+	python -m monetization_engine.api.app
+
+dev-ui: ## Start only frontend dev server
+	cd frontend && npm run dev
+
+build-ui: ## Build frontend for production
+	cd frontend && npm run build
+
+preview-ui: ## Preview production build
+	cd frontend && npm run preview
 
 run-api-prod: ## Start production API server with Gunicorn
 	gunicorn monetization_engine.api.app:app -w 4 -b 0.0.0.0:5000
