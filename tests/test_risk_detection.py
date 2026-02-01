@@ -788,3 +788,132 @@ def test_expansion_scorer_usage_without_limits(db_session):
     assert score.expansion_score >= 20  # Tenure points only
 
 
+def test_risk_detector_no_payment_issues(db_session):
+    """Test detect_payment_issues when there are none."""
+    # Create subscription with no failed payments
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_good",
+        customer_id="cus_good",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    detector = RiskDetector(db_session)
+    risks = detector.detect_payment_issues()
+    
+    assert len(risks) == 0
+
+
+def test_risk_detector_no_declining_usage(db_session):
+    """Test detect_declining_usage when usage is steady."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        limits={"api_calls": 10000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_steady",
+        customer_id="cus_steady",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15)
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Steady usage
+    for i in range(5):
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=5000,
+            limit=10000,
+            period_start=datetime.now(UTC) - timedelta(days=i*2),
+            period_end=datetime.now(UTC) - timedelta(days=i*2-1)
+        )
+        db_session.add(usage)
+    db_session.commit()
+    
+    detector = RiskDetector(db_session)
+    risks = detector.detect_declining_usage()
+    
+    assert len(risks) == 0
+
+
+def test_expansion_scorer_very_high_score(db_session):
+    """Test customer with very high expansion score."""
+    product = Product(name="Test Product", stripe_product_id="prod_test")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Starter",
+        price_monthly=29.0,
+        limits={"api_calls": 1000},
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_perfect",
+        customer_id="cus_perfect",
+        plan_id=plan.id,
+        status="active",
+        mrr=29.0,
+        current_period_start=datetime.now(UTC) - timedelta(days=15),
+        current_period_end=datetime.now(UTC) + timedelta(days=15),
+        created_at=datetime.now(UTC) - timedelta(days=400)  # Long tenure
+    )
+    db_session.add(subscription)
+    db_session.flush()
+    
+    # Growing usage - first half low, second half high
+    for i in range(20):
+        quantity = 300 if i < 10 else 900  # Strong growth
+        usage = UsageRecord(
+            subscription_id=subscription.id,
+            metric_name="api_calls",
+            quantity=quantity,
+            limit=1000,
+            period_start=datetime.now(UTC) - timedelta(days=40-i*2),
+            period_end=datetime.now(UTC) - timedelta(days=39-i*2)
+        )
+        db_session.add(usage)
+    db_session.commit()
+    
+    scorer = ExpansionScorer(db_session)
+    score = scorer.score_customer("cus_perfect")
+    
+    # Should be safe to upsell
+    assert score.expansion_score >= 70
+    assert score.expansion_category == "safe_to_upsell"
+
