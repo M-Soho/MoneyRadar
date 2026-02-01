@@ -9,8 +9,7 @@ from monetization_engine.database import get_db, init_db
 from monetization_engine.logging_config import setup_logging
 from monetization_engine.ingestion import StripeIngestion
 from monetization_engine.ingestion.usage import UsageTracker
-from monetization_engine.analysis import MismatchDetector
-from monetization_engine.analysis.risk_detection import RiskDetector, ExpansionScorer
+from monetization_engine.analysis import MismatchDetector, RiskDetector, ExpansionScorer
 from monetization_engine.experiments import ExperimentTracker, ExperimentReporter
 
 logger = logging.getLogger(__name__)

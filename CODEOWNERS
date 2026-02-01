@@ -1,0 +1,21 @@
+# Code Owners - Auto-request reviews from these users
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @M-Soho
+
+# Database models and migrations
+/monetization_engine/models/ @M-Soho
+/monetization_engine/migrations.py @M-Soho
+
+# API routes
+/monetization_engine/api/ @M-Soho
+
+# Analysis engine
+/monetization_engine/analysis/ @M-Soho
+
+# Tests
+/tests/ @M-Soho
+
+# Documentation
+*.md @M-Soho
