@@ -1,6 +1,6 @@
 """Monetization Experiments Tracker - Prevent Pricing Amnesia."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -198,20 +198,21 @@ class ExperimentTracker:
                 Subscription.canceled_at >= datetime.utcnow() - timedelta(days=30)
             ).count()
             
-            return (churned / total_subs) * 100 if total_subs > 0 else 0.0
+            if total_subs == 0:
+                return 0.0
+            
+            return (churned / total_subs) * 100
         
         elif metric == "mrr":
-            return sum(s.mrr for s in subscriptions)
+            total_mrr = sum(s.mrr for s in subscriptions)
+            return total_mrr
         
         else:
+            # Unknown metric
             return 0.0
     
-    def _count_affected_customers(
-        self,
-        segment: Dict[str, Any]
-    ) -> tuple[int, int]:
-        """Count customers in control vs variant groups."""
-        # Simplified - in real implementation, you'd split customers
+    def _count_affected_customers(self, segment: Dict[str, Any]) -> tuple:
+        """Count customers in control and variant groups."""
         query = self.db.query(Subscription).filter(
             Subscription.status == "active"
         )
@@ -219,64 +220,80 @@ class ExperimentTracker:
         if "plan_id" in segment:
             query = query.filter(Subscription.plan_id == segment["plan_id"])
         
-        total_count = query.count()
-        control = total_count // 2
-        variant = total_count - control
+        total = query.count()
         
-        return control, variant
+        # Simple 50/50 split for now
+        control = total // 2
+        variant = total - control
+        
+        return (control, variant)
 
 
 class ExperimentReporter:
-    """Generate reports on experiment outcomes."""
+    """Generate reports and insights from experiments."""
     
     def __init__(self, db: Session):
         self.db = db
     
-    def generate_summary_report(self) -> Dict[str, Any]:
-        """Generate summary of all experiments."""
-        experiments = self.db.query(Experiment).all()
+    def generate_summary_report(self, experiment_id: int) -> Dict[str, Any]:
+        """Generate a summary report for an experiment."""
+        experiment = self.db.query(Experiment).get(experiment_id)
         
-        total = len(experiments)
-        by_status = {}
-        successful = 0
+        if not experiment:
+            raise ValueError(f"Experiment {experiment_id} not found")
         
-        for exp in experiments:
-            status = exp.status.value
-            by_status[status] = by_status.get(status, 0) + 1
-            
-            if exp.status == ExperimentStatus.COMPLETED and exp.actual_value:
-                if exp.target_value:
-                    if (exp.target_value > exp.baseline_value and exp.actual_value >= exp.target_value) or \
-                       (exp.target_value < exp.baseline_value and exp.actual_value <= exp.target_value):
-                        successful += 1
-        
-        return {
-            "total_experiments": total,
-            "by_status": by_status,
-            "successful_experiments": successful,
-            "success_rate": (successful / total * 100) if total > 0 else 0
+        report = {
+            "experiment_id": experiment.id,
+            "name": experiment.name,
+            "hypothesis": experiment.hypothesis,
+            "status": experiment.status.value,
+            "metric_tracked": experiment.metric_tracked,
+            "baseline_value": experiment.baseline_value,
+            "actual_value": experiment.actual_value,
+            "target_value": experiment.target_value,
+            "outcome": experiment.outcome,
+            "started_at": experiment.started_at.isoformat() if experiment.started_at else None,
+            "ended_at": experiment.ended_at.isoformat() if experiment.ended_at else None,
         }
+        
+        # Calculate success metrics
+        if experiment.baseline_value and experiment.actual_value:
+            improvement = experiment.actual_value - experiment.baseline_value
+            improvement_percent = (improvement / experiment.baseline_value) * 100
+            report["improvement"] = improvement
+            report["improvement_percent"] = improvement_percent
+            
+            if experiment.target_value:
+                report["target_met"] = experiment.actual_value >= experiment.target_value
+        
+        return report
     
-    def get_learnings(self, metric: str) -> List[Dict[str, Any]]:
-        """Extract learnings from past experiments for a specific metric."""
-        experiments = self.db.query(Experiment).filter(
-            Experiment.metric_tracked == metric,
+    def get_learnings(self, metric: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get key learnings from past experiments."""
+        query = self.db.query(Experiment).filter(
             Experiment.status == ExperimentStatus.COMPLETED
-        ).order_by(Experiment.ended_at.desc()).all()
+        )
+        
+        if metric:
+            query = query.filter(Experiment.metric_tracked == metric)
+        
+        experiments = query.order_by(Experiment.ended_at.desc()).limit(20).all()
         
         learnings = []
-        
         for exp in experiments:
             if exp.baseline_value and exp.actual_value:
                 improvement = ((exp.actual_value - exp.baseline_value) / exp.baseline_value) * 100
                 
                 learnings.append({
                     "name": exp.name,
-                    "hypothesis": exp.hypothesis,
                     "change": exp.change_description,
+                    "metric": exp.metric_tracked,
                     "improvement_percent": improvement,
                     "outcome": exp.outcome,
                     "ended_at": exp.ended_at.isoformat() if exp.ended_at else None
                 })
         
         return learnings
+
+
+__all__ = ['ExperimentTracker', 'ExperimentReporter']

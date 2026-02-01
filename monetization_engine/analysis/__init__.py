@@ -202,102 +202,29 @@ class MismatchDetector:
                 Subscription.status == "active"
             ).all()
             
-            if len(subs) < 3:  # Need minimum sample size
+            if not subs:
                 continue
             
-            # Analyze usage patterns
+            # Analyze usage patterns for this plan
             high_usage_count = 0
-            low_usage_count = 0
-            
             for sub in subs:
                 usage_summary = self._get_usage_summary(sub)
-                if not usage_summary:
-                    continue
-                
-                utilization = self._calculate_utilization(usage_summary)
-                
-                if utilization > self.usage_threshold:
-                    high_usage_count += 1
-                elif utilization < (1 - self.usage_threshold):
-                    low_usage_count += 1
+                if usage_summary:
+                    utilization = self._calculate_utilization(usage_summary)
+                    if utilization > 0.8:
+                        high_usage_count += 1
             
-            # If majority are mismatched, the plan itself might be mispriced
-            total_analyzed = high_usage_count + low_usage_count
-            if total_analyzed > 0:
-                high_ratio = high_usage_count / total_analyzed
-                
-                if high_ratio > 0.6:
-                    results.append({
-                        "plan_id": plan.id,
-                        "plan_name": plan.name,
-                        "issue": "Plan limits may be too restrictive",
-                        "affected_customers": high_usage_count,
-                        "recommendation": "Consider raising limits or creating higher tier"
-                    })
-                elif high_ratio < 0.2:
-                    results.append({
-                        "plan_id": plan.id,
-                        "plan_name": plan.name,
-                        "issue": "Plan limits may be too generous",
-                        "affected_customers": low_usage_count,
-                        "recommendation": "Consider lowering limits or reducing price"
-                    })
+            # If majority of customers are hitting limits, feature may be mispriced
+            if len(subs) > 0 and high_usage_count / len(subs) > 0.5:
+                results.append({
+                    "plan_id": plan.id,
+                    "plan_name": plan.name,
+                    "high_usage_percentage": (high_usage_count / len(subs)) * 100,
+                    "total_customers": len(subs),
+                    "recommendation": "Consider increasing limits or price for this plan"
+                })
         
         return results
 
 
-class SupportTicketAnalyzer:
-    """Analyze support ticket patterns for mismatch signals."""
-    
-    def __init__(self, db: Session):
-        self.db = db
-    
-    def correlate_tickets_with_plans(
-        self,
-        ticket_data: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Correlate support tickets with plans.
-        
-        Args:
-            ticket_data: List of tickets with customer_id and ticket_type
-        """
-        plan_tickets = {}
-        
-        for ticket in ticket_data:
-            customer_id = ticket.get("customer_id")
-            
-            # Find subscription
-            sub = self.db.query(Subscription).filter(
-                Subscription.customer_id == customer_id,
-                Subscription.status == "active"
-            ).first()
-            
-            if not sub:
-                continue
-            
-            plan_name = sub.plan.name
-            
-            if plan_name not in plan_tickets:
-                plan_tickets[plan_name] = {
-                    "total_customers": 0,
-                    "total_tickets": 0,
-                    "tickets_per_customer": 0.0
-                }
-            
-            plan_tickets[plan_name]["total_tickets"] += 1
-        
-        # Calculate tickets per customer for each plan
-        for plan_name in plan_tickets:
-            customer_count = self.db.query(Subscription).join(Plan).filter(
-                Plan.name == plan_name,
-                Subscription.status == "active"
-            ).count()
-            
-            plan_tickets[plan_name]["total_customers"] = customer_count
-            if customer_count > 0:
-                plan_tickets[plan_name]["tickets_per_customer"] = (
-                    plan_tickets[plan_name]["total_tickets"] / customer_count
-                )
-        
-        return plan_tickets
+__all__ = ['MismatchDetector']

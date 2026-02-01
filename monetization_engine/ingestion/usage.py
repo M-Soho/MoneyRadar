@@ -1,11 +1,14 @@
 """Usage tracking and recording."""
 
+import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from monetization_engine.models import UsageRecord, Subscription, Plan
+
+logger = logging.getLogger(__name__)
 
 
 class UsageTracker:
@@ -95,7 +98,7 @@ class UsageTracker:
         
         return summary
     
-    def bulk_import_usage(self, usage_data: list[Dict[str, Any]]) -> int:
+    def bulk_import_usage(self, usage_data: List[Dict[str, Any]]) -> int:
         """Bulk import usage data from external source."""
         count = 0
         
@@ -110,6 +113,9 @@ class UsageTracker:
                 )
                 count += 1
             except Exception as e:
-                print(f"Error importing usage for {data.get('customer_id')}: {e}")
+                logger.error(f"Error importing usage for {data.get('customer_id')}: {e}")
         
         return count
+
+
+__all__ = ['UsageTracker']

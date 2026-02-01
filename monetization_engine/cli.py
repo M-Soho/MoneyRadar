@@ -1,21 +1,27 @@
 """Command-line interface for MoneyRadar."""
 
 import click
+import logging
 from datetime import datetime
 from tabulate import tabulate
 
 from monetization_engine.database import get_db, init_db
+from monetization_engine.logging_config import setup_logging
 from monetization_engine.ingestion import StripeIngestion
 from monetization_engine.ingestion.usage import UsageTracker
 from monetization_engine.analysis import MismatchDetector
 from monetization_engine.analysis.risk_detection import RiskDetector, ExpansionScorer
 from monetization_engine.experiments import ExperimentTracker, ExperimentReporter
 
+logger = logging.getLogger(__name__)
+
 
 @click.group()
-def cli():
+@click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
+def cli(verbose):
     """MoneyRadar - Internal Monetization Engine."""
-    pass
+    log_level = "DEBUG" if verbose else "INFO"
+    setup_logging(log_level)
 
 
 # ============================================================================

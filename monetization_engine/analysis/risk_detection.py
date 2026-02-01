@@ -93,7 +93,7 @@ class RiskDetector:
                 continue
             
             # Check retry count
-            retry_count = event.metadata.get("attempt_count", 1) if event.metadata else 1
+            retry_count = event.event_metadata.get("attempt_count", 1) if event.event_metadata else 1
             
             severity = AlertSeverity.WARNING if retry_count < 3 else AlertSeverity.CRITICAL
             
@@ -378,3 +378,6 @@ class ExpansionScorer:
         
         ratios = [r.quantity / r.limit for r in records if r.limit > 0]
         return sum(ratios) / len(ratios) if ratios else 0.0
+
+
+__all__ = ['RiskDetector', 'ExpansionScorer']

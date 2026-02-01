@@ -1,6 +1,7 @@
 """Stripe event ingestion and processing."""
 
 import stripe
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
@@ -13,6 +14,9 @@ from monetization_engine.models import (
 
 settings = get_settings()
 stripe.api_key = settings.stripe_api_key
+logger = logging.getLogger(__name__)
+
+__all__ = ['StripeIngestion']
 
 
 class StripeIngestion:
@@ -105,7 +109,14 @@ class StripeIngestion:
         
         handler = handlers.get(event_type)
         if handler:
-            handler(event_data["data"]["object"])
+            try:
+                handler(event_data["data"]["object"])
+                logger.info(f"Successfully processed webhook event: {event_type}")
+            except Exception as e:
+                logger.error(f"Error processing webhook event {event_type}: {e}")
+                raise
+        else:
+            logger.debug(f"Unhandled webhook event type: {event_type}")
     
     def _handle_subscription_created(self, subscription_data: Dict[str, Any]) -> None:
         """Handle subscription.created event."""
@@ -116,7 +127,7 @@ class StripeIngestion:
         ).first()
         
         if not plan:
-            print(f"Warning: Plan not found for price {stripe_price_id}")
+            logger.warning(f"Plan not found for price {stripe_price_id}")
             return
         
         # Calculate MRR
@@ -142,7 +153,7 @@ class StripeIngestion:
             stripe_event_id=subscription_data["id"],
             amount=mrr,
             mrr_delta=mrr,
-            metadata={"plan_name": plan.name}
+            event_metadata={"plan_name": plan.name}
         )
         self.db.add(event)
         self.db.commit()
@@ -184,7 +195,7 @@ class StripeIngestion:
                 event_type=event_type,
                 stripe_event_id=subscription_data["id"],
                 mrr_delta=mrr_delta,
-                metadata={"old_mrr": old_mrr, "new_mrr": new_mrr}
+                event_metadata={"old_mrr": old_mrr, "new_mrr": new_mrr}
             )
             self.db.add(event)
         
@@ -209,7 +220,7 @@ class StripeIngestion:
             event_type=RevenueEventType.SUBSCRIPTION_CANCELED,
             stripe_event_id=subscription_data["id"],
             mrr_delta=-subscription.mrr,
-            metadata={"canceled_mrr": subscription.mrr}
+            event_metadata={"canceled_mrr": subscription.mrr}
         )
         self.db.add(event)
         
@@ -256,7 +267,7 @@ class StripeIngestion:
                 stripe_event_id=invoice_data["id"],
                 amount=invoice_data["amount_due"] / 100,
                 currency=invoice_data["currency"].upper(),
-                metadata={"attempt_count": invoice_data.get("attempt_count", 1)}
+                event_metadata={"attempt_count": invoice_data.get("attempt_count", 1)}
             )
             self.db.add(event)
             self.db.commit()

@@ -1,12 +1,17 @@
 """Configuration management for MoneyRadar."""
 
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, ConfigDict
 from typing import Optional
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=False
+    )
     
     # Database
     database_url: str = Field(
@@ -49,10 +54,6 @@ class Settings(BaseSettings):
     # OPSP Integration (optional)
     opsp_api_url: Optional[str] = Field(default=None)
     opsp_api_key: Optional[str] = Field(default=None)
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 def get_settings() -> Settings:

@@ -1,8 +1,13 @@
 """Test fixtures and configuration."""
 
+import os
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+# Set test environment variables before importing modules
+os.environ.setdefault("STRIPE_API_KEY", "sk_test_fake_key_for_testing")
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 from monetization_engine.database import Base
 

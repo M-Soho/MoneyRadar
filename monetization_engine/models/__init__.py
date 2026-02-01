@@ -123,7 +123,7 @@ class RevenueEvent(Base):
     currency = Column(String(3), default="USD")
     mrr_delta = Column(Float)  # Change in MRR
     
-    metadata = Column(JSON)  # Additional event data
+    event_metadata = Column(JSON)  # Additional event data (renamed from 'metadata' to avoid SQLAlchemy reserved word)
     occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     processed_at = Column(DateTime, server_default=func.now())
     
