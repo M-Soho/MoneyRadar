@@ -43,7 +43,7 @@ class ExperimentTracker:
     
     def start_experiment(self, experiment_id: int) -> Experiment:
         """Start running an experiment."""
-        experiment = self.db.query(Experiment).get(experiment_id)
+        experiment = self.db.get(Experiment, experiment_id)
         
         if not experiment:
             raise ValueError(f"Experiment {experiment_id} not found")
@@ -79,7 +79,7 @@ class ExperimentTracker:
         outcome: str
     ) -> Experiment:
         """Record experiment results."""
-        experiment = self.db.query(Experiment).get(experiment_id)
+        experiment = self.db.get(Experiment, experiment_id)
         
         if not experiment:
             raise ValueError(f"Experiment {experiment_id} not found")
@@ -116,7 +116,7 @@ class ExperimentTracker:
     
     def analyze_experiment(self, experiment_id: int) -> Dict[str, Any]:
         """Analyze experiment performance."""
-        experiment = self.db.query(Experiment).get(experiment_id)
+        experiment = self.db.get(Experiment, experiment_id)
         
         if not experiment:
             raise ValueError(f"Experiment {experiment_id} not found")
@@ -237,7 +237,7 @@ class ExperimentReporter:
     
     def generate_summary_report(self, experiment_id: int) -> Dict[str, Any]:
         """Generate a summary report for an experiment."""
-        experiment = self.db.query(Experiment).get(experiment_id)
+        experiment = self.db.get(Experiment, experiment_id)
         
         if not experiment:
             raise ValueError(f"Experiment {experiment_id} not found")

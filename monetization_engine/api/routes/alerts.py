@@ -60,7 +60,7 @@ def scan_risks():
 def resolve_alert(alert_id):
     """Resolve an alert."""
     with get_db() as db:
-        alert = db.query(Alert).get(alert_id)
+        alert = db.get(Alert, alert_id)
         
         if not alert:
             return jsonify({"error": "Alert not found"}), 404
