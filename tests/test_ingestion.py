@@ -603,3 +603,467 @@ def test_process_revenue_events(db_session):
     assert len(events) == 1
     assert events[0].event_type == RevenueEventType.SUBSCRIPTION_CREATED
     assert events[0].mrr_delta == 29.0
+
+def test_webhook_subscription_created(db_session):
+    """Test handling subscription.created webhook."""
+    # Create product and plan first
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_123",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.commit()
+    
+    # Create webhook event data
+    event_data = {
+        "type": "customer.subscription.created",
+        "data": {
+            "object": {
+                "id": "sub_webhook123",
+                "customer": "cus_webhook",
+                "status": "active",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [{
+                        "price": {
+                            "id": "price_123",
+                            "unit_amount": 9900,
+                            "recurring": {"interval": "month"}
+                        },
+                        "quantity": 1
+                    }]
+                }
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    ingestion.process_webhook_event(event_data)
+    
+    # Verify subscription was created
+    subscription = db_session.query(Subscription).filter(
+        Subscription.stripe_subscription_id == "sub_webhook123"
+    ).first()
+    
+    assert subscription is not None
+    assert subscription.customer_id == "cus_webhook"
+    assert subscription.mrr == 99.0
+    assert subscription.status == "active"
+    
+    # Verify revenue event was created
+    event = db_session.query(RevenueEvent).filter(
+        RevenueEvent.subscription_id == subscription.id
+    ).first()
+    
+    assert event is not None
+    assert event.event_type == RevenueEventType.SUBSCRIPTION_CREATED
+    assert event.mrr_delta == 99.0
+
+
+def test_webhook_subscription_upgraded(db_session):
+    """Test handling subscription upgrade webhook."""
+    # Create existing subscription
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    starter_plan = Plan(
+        product_id=product.id,
+        name="Starter",
+        price_monthly=29.0,
+        stripe_price_id="price_starter",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(starter_plan)
+    
+    pro_plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_pro",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(pro_plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_upgrade",
+        customer_id="cus_upgrade",
+        plan_id=starter_plan.id,
+        status="active",
+        mrr=29.0,
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    # Webhook event for upgrade
+    event_data = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_upgrade",
+                "customer": "cus_upgrade",
+                "status": "active",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [{
+                        "price": {
+                            "id": "price_pro",
+                            "unit_amount": 9900,
+                            "recurring": {"interval": "month"}
+                        },
+                        "quantity": 1
+                    }]
+                }
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    ingestion.process_webhook_event(event_data)
+    
+    # Verify subscription was updated
+    db_session.refresh(subscription)
+    assert subscription.mrr == 99.0
+    
+    # Verify upgrade event was created
+    event = db_session.query(RevenueEvent).filter(
+        RevenueEvent.subscription_id == subscription.id,
+        RevenueEvent.event_type == RevenueEventType.SUBSCRIPTION_UPGRADED
+    ).first()
+    
+    assert event is not None
+    assert event.mrr_delta == 70.0  # 99 - 29
+
+
+def test_webhook_subscription_downgraded(db_session):
+    """Test handling subscription downgrade webhook."""
+    # Create existing subscription
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    pro_plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_pro",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(pro_plan)
+    
+    starter_plan = Plan(
+        product_id=product.id,
+        name="Starter",
+        price_monthly=29.0,
+        stripe_price_id="price_starter",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(starter_plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_downgrade",
+        customer_id="cus_downgrade",
+        plan_id=pro_plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    # Webhook event for downgrade
+    event_data = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_downgrade",
+                "customer": "cus_downgrade",
+                "status": "active",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [{
+                        "price": {
+                            "id": "price_starter",
+                            "unit_amount": 2900,
+                            "recurring": {"interval": "month"}
+                        },
+                        "quantity": 1
+                    }]
+                }
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    ingestion.process_webhook_event(event_data)
+    
+    # Verify subscription was updated
+    db_session.refresh(subscription)
+    assert subscription.mrr == 29.0
+    
+    # Verify downgrade event was created
+    event = db_session.query(RevenueEvent).filter(
+        RevenueEvent.subscription_id == subscription.id,
+        RevenueEvent.event_type == RevenueEventType.SUBSCRIPTION_DOWNGRADED
+    ).first()
+    
+    assert event is not None
+    assert event.mrr_delta == -70.0  # 29 - 99
+
+
+def test_webhook_subscription_deleted(db_session):
+    """Test handling subscription.deleted webhook."""
+    # Create subscription
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_pro",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_cancel",
+        customer_id="cus_cancel",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    # Webhook event for cancellation
+    event_data = {
+        "type": "customer.subscription.deleted",
+        "data": {
+            "object": {
+                "id": "sub_cancel",
+                "customer": "cus_cancel",
+                "status": "canceled",
+                "current_period_start": int(datetime.now(UTC).timestamp()),
+                "current_period_end": int((datetime.now(UTC) + timedelta(days=30)).timestamp()),
+                "items": {
+                    "data": [{
+                        "price": {
+                            "id": "price_pro",
+                            "unit_amount": 9900,
+                            "recurring": {"interval": "month"}
+                        },
+                        "quantity": 1
+                    }]
+                }
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    ingestion.process_webhook_event(event_data)
+    
+    # Verify subscription was canceled
+    db_session.refresh(subscription)
+    assert subscription.status == "canceled"
+    assert subscription.mrr == 0.0
+    assert subscription.canceled_at is not None
+    
+    # Verify cancellation event was created
+    event = db_session.query(RevenueEvent).filter(
+        RevenueEvent.subscription_id == subscription.id,
+        RevenueEvent.event_type == RevenueEventType.SUBSCRIPTION_CANCELED
+    ).first()
+    
+    assert event is not None
+    assert event.mrr_delta == -99.0
+
+
+def test_webhook_payment_succeeded(db_session):
+    """Test handling invoice.payment_succeeded webhook."""
+    # Create subscription
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_pro",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_payment",
+        customer_id="cus_payment",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    # Webhook event for payment
+    event_data = {
+        "type": "invoice.payment_succeeded",
+        "data": {
+            "object": {
+                "id": "in_success",
+                "subscription": "sub_payment",
+                "amount_paid": 9900,
+                "currency": "usd"
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    ingestion.process_webhook_event(event_data)
+    
+    # Verify payment event was created
+    event = db_session.query(RevenueEvent).filter(
+        RevenueEvent.subscription_id == subscription.id,
+        RevenueEvent.event_type == RevenueEventType.PAYMENT_SUCCEEDED
+    ).first()
+    
+    assert event is not None
+    assert event.amount == 99.0
+    assert event.currency == "USD"
+
+
+def test_webhook_payment_failed(db_session):
+    """Test handling invoice.payment_failed webhook."""
+    # Create subscription
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro",
+        price_monthly=99.0,
+        stripe_price_id="price_pro",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.flush()
+    
+    subscription = Subscription(
+        stripe_subscription_id="sub_fail",
+        customer_id="cus_fail",
+        plan_id=plan.id,
+        status="active",
+        mrr=99.0,
+        current_period_start=datetime.now(UTC),
+        current_period_end=datetime.now(UTC) + timedelta(days=30)
+    )
+    db_session.add(subscription)
+    db_session.commit()
+    
+    # Webhook event for failed payment
+    event_data = {
+        "type": "invoice.payment_failed",
+        "data": {
+            "object": {
+                "id": "in_fail",
+                "subscription": "sub_fail",
+                "amount_due": 9900,
+                "currency": "usd",
+                "attempt_count": 2
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    ingestion.process_webhook_event(event_data)
+    
+    # Verify payment failure event was created
+    event = db_session.query(RevenueEvent).filter(
+        RevenueEvent.subscription_id == subscription.id,
+        RevenueEvent.event_type == RevenueEventType.PAYMENT_FAILED
+    ).first()
+    
+    assert event is not None
+    assert event.amount == 99.0
+    assert event.event_metadata["attempt_count"] == 2
+
+
+def test_calculate_mrr_annual_subscription(db_session):
+    """Test MRR calculation for annual subscriptions."""
+    product = Product(name="Test Product", stripe_product_id="prod_123")
+    db_session.add(product)
+    db_session.flush()
+    
+    plan = Plan(
+        product_id=product.id,
+        name="Pro Annual",
+        price_monthly=83.25,  # $999/year / 12
+        price_annual=999.0,
+        stripe_price_id="price_annual",
+        effective_from=datetime.now(UTC)
+    )
+    db_session.add(plan)
+    db_session.commit()
+    
+    # Subscription data with annual billing
+    subscription_data = {
+        "id": "sub_annual",
+        "customer": "cus_annual",
+        "status": "active",
+        "current_period_start": int(datetime.now(UTC).timestamp()),
+        "current_period_end": int((datetime.now(UTC) + timedelta(days=365)).timestamp()),
+        "items": {
+            "data": [{
+                "price": {
+                    "id": "price_annual",
+                    "unit_amount": 99900,
+                    "recurring": {"interval": "year"}
+                },
+                "quantity": 1
+            }]
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    mrr = ingestion._calculate_mrr(subscription_data)
+    
+    assert mrr == 83.25  # 999 / 12
+
+
+def test_webhook_unhandled_event(db_session):
+    """Test handling unhandled webhook event types."""
+    event_data = {
+        "type": "customer.created",
+        "data": {
+            "object": {
+                "id": "cus_123"
+            }
+        }
+    }
+    
+    ingestion = StripeIngestion(db_session)
+    # Should not raise an error, just log and ignore
+    ingestion.process_webhook_event(event_data)
