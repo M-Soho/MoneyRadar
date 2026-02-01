@@ -5,8 +5,8 @@
 ### Internal Monetization Engine for SaaS Businesses
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-31%20passing-success.svg)](tests/)
-[![Coverage](https://img.shields.io/badge/coverage-67%25-yellow.svg)](htmlcov/)
+[![Tests](https://img.shields.io/badge/tests-36%20passing-success.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-71%25-green.svg)](htmlcov/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
